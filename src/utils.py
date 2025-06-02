@@ -185,3 +185,115 @@ def generate_future_predictions(
     combined_df = pd.concat([last_point, future_df], ignore_index=True)
 
     return combined_df
+
+
+@st.cache_data(ttl=86400)
+def get_video_details(token: str) -> dict | None:
+    """
+    Gets the metadata of all videos. Cached for 24 hours.
+
+    Args:
+        token (str): The bearer token for API authentication.
+
+    Returns:
+        dict or None: dict containing the metadata off all videos if successful, otherwise None
+    """
+    url = "https://www.dreamingspanish.com/.netlify/functions/videos"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()['videos']
+    except Exception as e:
+        st.error(f"Error fetching video details: {str(e)}")
+        return None
+
+
+@st.cache_data(ttl=3600)
+def get_watch_history(token: str) -> dict | None:
+    """
+    Gets the user's watch history. Cached for 1 hour.
+
+    Args:
+        token (str): The bearer token for API authentication.
+
+    Returns:
+        dict or None: dict containing all watched videos if successful, 
+        otherwise None
+    """
+    url = "https://www.dreamingspanish.com/.netlify/functions/watchedVideo"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()['watchedVideos']
+    except Exception as e:
+        st.error(f"Error fetching watch history: {str(e)}")
+        return None
+
+
+def analyze_video_content(token: str) -> dict | None:
+    """
+    Analyzes the user's video viewing history to extract insights about levels, guides, tags, and other video metadata.
+    
+    Args:
+        token (str): The bearer token for API authentication.
+
+    Returns:
+        dict: dict of DataFrames including video metadata, guide, and tag info
+    """
+    watched_data = get_watch_history(token)
+    videos_data = get_video_details(token)
+    if not watched_data or not videos_data:
+        return None
+
+    videos_df = pd.DataFrame(videos_data)
+    watched_df = pd.DataFrame(watched_data)
+
+    # Rename the video ID column in videos_df to match watched_df for merging
+    # videos_df uses '_id' while watched_df uses 'videoId'
+    videos_df = videos_df.rename(columns={'_id': 'videoId'})
+
+    # Merge the DataFrames on videoId
+    df = pd.merge(videos_df, watched_df, on='videoId', how='inner')
+
+    # Clean and process data
+    df['lastWatched'] = pd.to_datetime(df['lastWatched'], errors='coerce')
+    df['level'] = df['level'].fillna('unknown')
+    df['watchPosition'] = pd.to_numeric(df['watchPosition'], errors='coerce').fillna(0)
+    
+    # Expand guides (since it's a list)
+    guides_expanded = []
+    for idx, row in df.iterrows():
+        guides = row.get('guides', [])
+        if isinstance(guides, list):
+            for guide in guides:
+                guides_expanded.append({
+                    'guide': guide,
+                    'level': row['level'],
+                    'watchPosition': row['watchPosition'],
+                    'lastWatched': row['lastWatched'],
+                })
+    
+    guides_df = pd.DataFrame(guides_expanded) if guides_expanded else pd.DataFrame()
+    
+    # Expand tags
+    tags_expanded = []
+    for idx, row in df.iterrows():
+        tags = row.get('tags', [])
+        if isinstance(tags, list):
+            for tag in tags:
+                tags_expanded.append({
+                    'tag': tag,
+                    'level': row['level'],
+                    'watchPosition': row['watchPosition'],
+                    'lastWatched': row['lastWatched'],
+                })
+    
+    tags_df = pd.DataFrame(tags_expanded) if tags_expanded else pd.DataFrame()
+    
+    return {
+        'videos_df': df,
+        'guides_df': guides_df,
+        'tags_df': tags_df
+    }

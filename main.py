@@ -17,7 +17,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.utils import generate_future_predictions, get_initial_time, load_data
+from src.utils import generate_future_predictions, get_initial_time, load_data, analyze_video_content
 
 # Set pandas option for future compatibility
 pd.set_option("future.no_silent_downcasting", True)
@@ -35,6 +35,11 @@ COLOUR_PALETTE = {
     "600": "#F1C40F",  # Yellow
     "1000": "#E67E22",  # Orange
     "1500": "#2ECC71",  # Green
+    # DS Level colors
+    "superbeginner": "#5BC3C5",
+    "beginner": "#4E9DDD",
+    "intermediate": "#EF864D",
+    "advanced": "#EB4569",
 }
 
 st.set_page_config(page_title="Dreaming Spanish Time Tracker", layout="wide")
@@ -320,7 +325,14 @@ with st.container(border=True):
 with st.container(border=True):
     st.subheader("Additional Graphs")
     # Create tabs for different visualizations
-    tab1, tab2, tab3 = st.tabs(["Daily Breakdown", "Moving Averages", "Yearly Heatmap"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Daily Breakdown", 
+        "Moving Averages", 
+        "Yearly Heatmap", 
+        "Level Distribution", 
+        "Guide Stats", 
+        "Topic Stats"
+    ])
 
     with tab1:
         # Daily breakdown
@@ -483,6 +495,182 @@ with st.container(border=True):
         )
 
         st.plotly_chart(heatmap_fig, use_container_width=True)
+    
+    video_analysis = analyze_video_content(token)
+    with tab4:
+        videos_df = video_analysis['videos_df']
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Level distribution by count
+            level_counts = videos_df['level'].value_counts()
+            level_counts_fig = go.Figure(data=[go.Pie(
+                labels=level_counts.index,
+                values=level_counts.values,
+                hole=0.4,
+                textposition='auto',
+                textinfo='label+value',
+                hovertemplate='%{percent:.1%}<extra></extra>',
+                marker=dict(
+                    colors=[COLOUR_PALETTE[level] for level in level_counts.index]
+                )
+            )])
+            level_counts_fig.update_layout(
+                title="Videos Watched by Level",
+                height=600,
+                showlegend=False
+            )
+            st.plotly_chart(level_counts_fig, use_container_width=True)
+        
+        with col2:
+            # Level distribution by time watched
+            level_time = videos_df.groupby('level')['watchPosition'].sum() / 3600
+            level_time_fig = go.Figure(data=[go.Pie(
+                labels=level_time.index,
+                values=level_time.values,
+                hole=0.4,
+                textposition='auto',
+                textinfo='label+value',
+                texttemplate='%{label}<br>%{value:.1f}h',
+                hovertemplate='%{label}<br>%{value:.1f} hours<br>%{percent}<extra></extra>',
+                marker=dict(
+                    colors=[COLOUR_PALETTE[level] for level in level_time.index]
+                )
+            )])
+            level_time_fig.update_layout(
+                title="Time Watched by Level (Hours)",
+                height=600, 
+                showlegend=False
+            )
+            st.plotly_chart(level_time_fig, use_container_width=True)
+
+    with tab5:
+        guides_df = video_analysis['guides_df']
+        all_guides = guides_df['guide'].dropna().unique()
+        st.metric("Unique Guides", len(all_guides))
+
+        base_palette = px.colors.qualitative.Set2 + px.colors.qualitative.Set3  # 20 colors
+        extended_colors = (base_palette * (len(all_guides) // len(base_palette) + 1))[:len(all_guides)]
+        tag_color_map = {tag: extended_colors[i] for i, tag in enumerate(sorted(all_guides))}
+
+        guide_color_map = {guide: extended_colors[i] for i, guide in enumerate(sorted(all_guides))}
+
+        col1, col2 = st.columns(2)
+        with col1:
+            guide_counts = guides_df['guide'].value_counts().head(10).sort_values(ascending=True)
+            guide_fig = go.Figure(data=[go.Pie(
+                labels=guide_counts.index,
+                values=guide_counts.values,
+                hole=0.4,
+                textposition='auto',
+                textinfo='label+value',
+                hovertemplate='%{label}<br>%{percent}<extra></extra>',
+                marker=dict(
+                    colors=[guide_color_map.get(guide, '#636EFA') for guide in guide_counts.index]
+                )
+            )])
+            guide_fig.update_layout(
+                title="Top 10 Guides by Videos Watched",
+                height=600,
+                showlegend=False
+            )
+            st.plotly_chart(guide_fig, use_container_width=True)
+        
+        with col2:
+            guide_time_totals = guides_df.groupby('guide')['watchPosition'].sum() / 3600  # Convert to hours
+            guide_time_top10 = guide_time_totals.sort_values(ascending=False).head(10)
+            
+            guide_time_fig = go.Figure(data=[go.Pie(
+                labels=guide_time_top10.index,
+                values=guide_time_top10.values,
+                hole=0.4,
+                textposition='auto',
+                textinfo='label+value',
+                texttemplate='%{label}<br>%{value:.1f}h',
+                hovertemplate='%{label}<br>%{value:.1f} hours<br>%{percent}<extra></extra>',
+                marker=dict(
+                    colors=[guide_color_map.get(guide, '#636EFA') for guide in guide_time_top10.index]
+                )
+            )])
+            guide_time_fig.update_layout(
+                title="Top 10 Guides by Time Watched (Hours)",
+                height=600,
+                showlegend=False
+            )
+            st.plotly_chart(guide_time_fig, use_container_width=True)
+
+    with tab6:
+        tags_df = video_analysis['tags_df']
+            
+        total_unique_topics = tags_df['tag'].nunique()
+        st.metric("Unique Topics", total_unique_topics)
+
+        # Create a consistent color mapping for all tags
+        all_tags = tags_df['tag'].dropna().unique()
+        # 29 colors
+        base_palette = px.colors.qualitative.Set1 + px.colors.qualitative.Set2 + px.colors.qualitative.Set3
+        # Extend colors if needed
+        extended_colors = (base_palette * ((len(all_tags) // len(base_palette)) + 1))[:len(all_tags)]
+        tag_color_map = {tag: extended_colors[i] for i, tag in enumerate(sorted(all_tags))}
+
+        col1, col2 = st.columns(2)
+        with col1:
+            # Top topics by count
+            tag_counts = tags_df['tag'].value_counts().head(20)  # Top 20 topics
+            # Sort for display
+            tag_counts_sorted = tag_counts.sort_values(ascending=True)
+            
+            # Get colors for these specific tags
+            bar_colors = [tag_color_map[tag] for tag in tag_counts_sorted.index]
+
+            tag_fig = go.Figure(data=[go.Bar(
+                x=tag_counts_sorted.values,
+                y=tag_counts_sorted.index,
+                orientation='h',
+                hovertemplate='%{x}<extra></extra>',
+                marker=dict(
+                    color=bar_colors,
+                    line=dict(width=0)
+                ),
+                showlegend=False
+            )])
+
+            tag_fig.update_layout(
+                title="Top 20 Topics by Videos Watched",
+                xaxis_title="Number of Videos",
+                yaxis_title="Topic",
+                height=700
+            )
+            st.plotly_chart(tag_fig, use_container_width=True)
+        with col2:
+            # Topics by time watched
+            tag_time = tags_df.groupby('tag')['watchPosition'].sum().sort_values(ascending=False).head(20) / 3600
+            # Sort for display
+            tag_time_sorted = tag_time.sort_values(ascending=True)
+
+            # Get colors for these specific tags (same color mapping)
+            bar_colors = [tag_color_map[tag] for tag in tag_time_sorted.index]
+
+            tag_time_fig = go.Figure(data=[go.Bar(
+                x=tag_time_sorted.values,
+                y=tag_time_sorted.index,
+                orientation='h',
+                hovertemplate='%{x:.1f} hours<extra></extra>',
+                marker=dict(
+                    color=bar_colors,
+                    line=dict(width=0)
+                ),
+                showlegend=False
+            )])
+
+            tag_time_fig.update_layout(
+                title="Top 20 Topics by Time Watched (Hours)",
+                xaxis_title="Hours Watched",
+                yaxis_title="Topic",
+                height=700
+            )
+            st.plotly_chart(tag_time_fig, use_container_width=True)
 
 with st.container(border=True):
     # Text predictions
