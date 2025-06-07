@@ -261,6 +261,7 @@ def analyze_video_content(token: str) -> dict | None:
     df['lastWatched'] = pd.to_datetime(df['lastWatched'], errors='coerce')
     df['level'] = df['level'].fillna('unknown')
     df['watchPosition'] = pd.to_numeric(df['watchPosition'], errors='coerce').fillna(0)
+    df['adjustedDifficulty'] = round((pd.to_numeric(df['difficultyScore']) - 255) / 2335 * 100)
     
     # Expand guides (since it's a list)
     guides_expanded = []
